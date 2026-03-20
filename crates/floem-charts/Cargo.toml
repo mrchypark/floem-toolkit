@@ -1,0 +1,23 @@
+[package]
+name = "floem-charts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+floem.workspace = true
+floem-theme.workspace = true
+floem-tokens.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "line_chart"
+harness = false
+
+[lints]
+workspace = true
+

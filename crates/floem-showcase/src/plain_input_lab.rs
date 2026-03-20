@@ -50,12 +50,6 @@ struct PlainInputField {
     view: AnyView,
 }
 
-pub(crate) fn plain_input_lab_subsection() -> impl IntoView {
-    let state = PlainInputLabState::new();
-
-    super::subsection("Plain text_input lab", plain_input_lab_content(state))
-}
-
 pub(crate) fn plain_input_lab_surface() -> impl IntoView {
     let state = PlainInputLabState::new();
 

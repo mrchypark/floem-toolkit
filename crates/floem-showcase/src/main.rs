@@ -115,10 +115,6 @@ fn ime_lab_surface() -> impl IntoView {
     .debug_name("showcase::ime_lab_surface")
 }
 
-fn ime_lab_subsection() -> impl IntoView {
-    subsection("IME lab", ime_lab_content())
-}
-
 fn ime_lab_content() -> impl IntoView {
     let ime_first_pass = RwSignal::new(String::new());
     let ime_source = RwSignal::new(String::new());
@@ -401,13 +397,6 @@ fn foundations_section() -> impl IntoView {
 fn components_section() -> impl IntoView {
     let project_name = RwSignal::new("floem-toolkit".to_string());
     let invalid_state = RwSignal::new("Needs review".to_string());
-    let first_name = RwSignal::new("alpha".to_string());
-    let second_name = RwSignal::new("beta".to_string());
-    let third_name = RwSignal::new("gamma".to_string());
-    let invalid_debug = RwSignal::new(InputDebugState::default());
-    let first_debug = RwSignal::new(InputDebugState::default());
-    let second_debug = RwSignal::new(InputDebugState::default());
-    let third_debug = RwSignal::new(InputDebugState::default());
     let accepted = RwSignal::new(true);
     let active_tab = RwSignal::new(Arc::<str>::from("overview"));
     let dialog_open = RwSignal::new(false);
@@ -468,6 +457,8 @@ fn components_section() -> impl IntoView {
                     "Form controls",
                     (
                         (
+                            views::label(|| "Project name".to_string())
+                                .style(|s| s.font_size(13.0).font_bold()),
                             Input::new()
                                 .bind(project_name)
                                 .placeholder("Project name")
@@ -477,102 +468,60 @@ fn components_section() -> impl IntoView {
                             })
                             .style(|s| {
                                 s.font_size(12.0)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 255)))
+                                    .line_height(1.4)
+                                    .color(to_color(ColorScale::rgba(148, 163, 184, 210)))
                             }),
                         )
                             .v_stack()
-                            .style(|s| s.row_gap(6.0))
+                            .style(|s| s.row_gap(6.0).min_width(220.0))
                             .debug_name("showcase::project_name_input"),
                         (
+                            views::label(|| "Review status".to_string())
+                                .style(|s| s.font_size(13.0).font_bold()),
                             Input::new()
                                 .bind(invalid_state)
                                 .invalid(true)
-                                .diagnostic_label("invalid")
-                                .on_debug_state_change(move |state| invalid_debug.set(state))
                                 .build(),
                             views::label(move || {
                                 format!("Current value: {:?}", invalid_state.get())
                             })
                             .style(|s| {
                                 s.font_size(12.0)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 255)))
+                                    .line_height(1.4)
+                                    .color(to_color(ColorScale::rgba(148, 163, 184, 210)))
                             }),
                         )
                             .v_stack()
-                            .style(|s| s.row_gap(6.0))
+                            .style(|s| s.row_gap(6.0).min_width(220.0))
                             .debug_name("showcase::invalid_state_input"),
-                        views::container(Checkbox::new().bind(accepted).build())
-                            .style(|s| {
-                                s.height(38.0)
-                                    .width(38.0)
-                                    .padding_left(4.0)
-                                    .padding_right(4.0)
-                                    .margin_top(-2.0)
-                            }),
-                    )
-                        .h_stack()
-                        .style(|s| s.items_center().column_gap(22.0))
-                        .debug_name("showcase::form_controls_row"),
-                ),
-                plain_input_lab::plain_input_lab_subsection(),
-                ime_lab_subsection(),
-                subsection(
-                    "Multi-input isolation",
-                    (
                         (
-                            Input::new()
-                                .bind(first_name)
-                                .placeholder("First input")
-                                .diagnostic_label("first")
-                                .on_debug_state_change(move |state| first_debug.set(state))
-                                .build(),
-                            views::label(move || {
-                                format!("Current value: {:?}", first_name.get())
+                            views::label(|| "Release gate".to_string())
+                                .style(|s| s.font_size(13.0).font_bold()),
+                            (
+                                Checkbox::new().bind(accepted).build(),
+                                views::label(move || {
+                                    if accepted.get() {
+                                        "Ready for review".to_string()
+                                    } else {
+                                        "Waiting for changes".to_string()
+                                    }
+                                })
+                                .style(|s| s.line_height(1.3)),
+                            )
+                                .h_stack()
+                                .style(|s| s.items_center().column_gap(10.0)),
+                            views::label(|| {
+                                "Simple controls should still read like finished product UI, not diagnostics."
+                                    .to_string()
                             })
                             .style(|s| {
                                 s.font_size(12.0)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 255)))
+                                    .line_height(1.4)
+                                    .color(to_color(ColorScale::rgba(148, 163, 184, 210)))
                             }),
                         )
                             .v_stack()
-                            .style(|s| s.row_gap(6.0))
-                            .debug_name("showcase::input_isolation_first"),
-                        (
-                            Input::new()
-                                .bind(second_name)
-                                .placeholder("Second input")
-                                .diagnostic_label("second")
-                                .on_debug_state_change(move |state| second_debug.set(state))
-                                .build(),
-                            views::label(move || {
-                                format!("Current value: {:?}", second_name.get())
-                            })
-                            .style(|s| {
-                                s.font_size(12.0)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 255)))
-                            }),
-                        )
-                            .v_stack()
-                            .style(|s| s.row_gap(6.0))
-                            .debug_name("showcase::input_isolation_second"),
-                        (
-                            Input::new()
-                                .bind(third_name)
-                                .placeholder("Third input")
-                                .diagnostic_label("third")
-                                .on_debug_state_change(move |state| third_debug.set(state))
-                                .build(),
-                            views::label(move || {
-                                format!("Current value: {:?}", third_name.get())
-                            })
-                            .style(|s| {
-                                s.font_size(12.0)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 255)))
-                            }),
-                        )
-                            .v_stack()
-                            .style(|s| s.row_gap(6.0))
-                            .debug_name("showcase::input_isolation_third"),
+                            .style(|s| s.row_gap(8.0).min_width(180.0)),
                     )
                         .h_stack()
                         .style(|s| {
@@ -581,22 +530,7 @@ fn components_section() -> impl IntoView {
                                 .column_gap(18.0)
                                 .row_gap(14.0)
                         })
-                        .debug_name("showcase::input_isolation_row"),
-                ),
-                subsection(
-                    "Input diagnostics",
-                    (
-                        input_debug_card("invalid", invalid_debug),
-                        input_debug_card("first", first_debug),
-                        input_debug_card("second", second_debug),
-                        input_debug_card("third", third_debug),
-                    )
-                        .h_stack()
-                        .style(|s| {
-                            s.flex_wrap(FlexWrap::Wrap)
-                                .column_gap(12.0)
-                                .row_gap(12.0)
-                        }),
+                        .debug_name("showcase::form_controls_row"),
                 ),
                 subsection(
                     "Tabs",

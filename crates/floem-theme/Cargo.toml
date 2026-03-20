@@ -1,0 +1,15 @@
+[package]
+name = "floem-theme"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+floem.workspace = true
+serde.workspace = true
+floem-tokens.workspace = true
+
+[lints]
+workspace = true
+

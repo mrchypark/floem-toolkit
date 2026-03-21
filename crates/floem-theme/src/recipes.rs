@@ -69,9 +69,9 @@ pub struct DialogRecipe {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CheckboxRecipe {
     pub background: ColorScale,
-    pub foreground: ColorScale,
     pub border: ColorScale,
     pub checked: ColorScale,
+    pub checked_foreground: ColorScale,
     pub radius: f64,
 }
 

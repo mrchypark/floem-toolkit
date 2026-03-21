@@ -102,9 +102,9 @@ impl ResolvedTheme {
     pub fn input_recipe(&self, size: ComponentSize, _invalid: bool) -> InputRecipe {
         let colors = &self.token_set.semantic.colors;
         let height = match size {
-            ComponentSize::Sm => 32.0,
-            ComponentSize::Md => 38.0,
-            ComponentSize::Lg => 44.0,
+            ComponentSize::Sm => 34.0,
+            ComponentSize::Md => 40.0,
+            ComponentSize::Lg => 46.0,
         };
         let (font_size, line_height, padding_y) = match size {
             ComponentSize::Sm => (13.0, 18.0, 6.0),
@@ -153,9 +153,9 @@ impl ResolvedTheme {
     pub fn checkbox_recipe(&self) -> CheckboxRecipe {
         CheckboxRecipe {
             background: self.token_set.semantic.colors.input,
-            foreground: self.token_set.semantic.colors.foreground,
             border: self.token_set.semantic.colors.border,
             checked: self.token_set.semantic.colors.primary,
+            checked_foreground: self.token_set.semantic.colors.background,
             radius: self.token_set.semantic.radius.sm,
         }
     }
@@ -169,14 +169,14 @@ impl ResolvedTheme {
             ThemeMode::Light => self
                 .token_set
                 .hover_for(self.token_set.semantic.colors.border),
-            ThemeMode::Dark => alpha(self.token_set.semantic.colors.foreground, 0.24),
+            ThemeMode::Dark => alpha(self.token_set.semantic.colors.foreground, 0.30),
         }
     }
 
     pub fn input_focus_ring(&self) -> floem_tokens::ColorScale {
         match self.mode() {
             ThemeMode::Light => alpha(self.token_set.semantic.colors.ring, 0.22),
-            ThemeMode::Dark => alpha(self.token_set.semantic.colors.ring, 0.18),
+            ThemeMode::Dark => alpha(self.token_set.semantic.colors.ring, 0.24),
         }
     }
 

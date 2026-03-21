@@ -89,6 +89,31 @@ impl TextInputPreedit {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ImePreeditTransition {
+    Ignored,
+    Clear { pending_commit: bool },
+    Set { preedit: TextInputPreedit },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImeCommitTransition {
+    Ignored,
+    Accept,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImeTextContextSnapshot {
+    text: String,
+    selection: (usize, usize),
+    marked_range: Option<(usize, usize)>,
+}
+
+enum TextInputUpdateState {
+    ExternalState { value: String, is_focused: bool },
+    BlurCommitOnFocusLost,
+}
+
 fn should_accept_ime_preedit(is_focused: bool) -> bool {
     is_focused
 }
@@ -99,6 +124,90 @@ fn should_clear_ime_preedit(has_local_preedit: bool, commit_pending: bool) -> bo
 
 fn should_accept_ime_commit(has_local_preedit: bool, commit_pending: bool) -> bool {
     has_local_preedit || commit_pending
+}
+
+fn next_ime_preedit_transition(
+    has_local_preedit: bool,
+    commit_pending: bool,
+    is_focused: bool,
+    text: &str,
+    cursor: Option<(usize, usize)>,
+) -> ImePreeditTransition {
+    if text.is_empty() {
+        if should_clear_ime_preedit(has_local_preedit, commit_pending) {
+            ImePreeditTransition::Clear {
+                pending_commit: has_local_preedit,
+            }
+        } else {
+            ImePreeditTransition::Ignored
+        }
+    } else if should_accept_ime_preedit(is_focused) {
+        ImePreeditTransition::Set {
+            preedit: TextInputPreedit {
+                text: text.to_string(),
+                cursor,
+            },
+        }
+    } else {
+        ImePreeditTransition::Ignored
+    }
+}
+
+fn next_ime_commit_transition(
+    has_local_preedit: bool,
+    commit_pending: bool,
+) -> ImeCommitTransition {
+    if should_accept_ime_commit(has_local_preedit, commit_pending) {
+        ImeCommitTransition::Accept
+    } else {
+        ImeCommitTransition::Ignored
+    }
+}
+
+fn blur_commit_text(
+    is_focused: bool,
+    preedit: Option<&TextInputPreedit>,
+) -> Option<String> {
+    if is_focused {
+        return None;
+    }
+
+    preedit
+        .filter(|preedit| !preedit.text.is_empty())
+        .map(|preedit| preedit.text.clone())
+}
+
+fn ime_text_context_snapshot(
+    buffer: &str,
+    cursor_glyph_idx: usize,
+    selection: Option<Range<usize>>,
+    preedit: Option<&TextInputPreedit>,
+) -> ImeTextContextSnapshot {
+    if let Some(preedit) = preedit {
+        let insert_idx = clamp_text_boundary(buffer, cursor_glyph_idx);
+        let rendered = display_text_with_preedit(buffer, cursor_glyph_idx, Some(preedit));
+        let marked_start = insert_idx;
+        let marked_end = insert_idx + preedit.text.len();
+        let cursor = marked_start + preedit.display_cursor_offset();
+        let start = byte_to_utf16_index(&rendered, cursor);
+        let end = byte_to_utf16_index(&rendered, cursor);
+        let marked_start_utf16 = byte_to_utf16_index(&rendered, marked_start);
+        let marked_end_utf16 = byte_to_utf16_index(&rendered, marked_end);
+        ImeTextContextSnapshot {
+            text: rendered,
+            selection: (start, end),
+            marked_range: Some((marked_start_utf16, marked_end_utf16)),
+        }
+    } else {
+        let selection = selection.unwrap_or(cursor_glyph_idx..cursor_glyph_idx);
+        let start = byte_to_utf16_index(buffer, selection.start);
+        let end = byte_to_utf16_index(buffer, selection.end);
+        ImeTextContextSnapshot {
+            text: buffer.to_string(),
+            selection: (start, end),
+            marked_range: None,
+        }
+    }
 }
 
 fn ime_debug_enabled_from(getter: impl Fn(&str) -> Option<OsString>) -> bool {
@@ -185,7 +294,10 @@ pub fn text_input(buffer: RwSignal<String>) -> TextInput {
     {
         create_effect(move |_| {
             let text = buffer.get();
-            id.update_state((text, is_focused.get()));
+            id.update_state(TextInputUpdateState::ExternalState {
+                value: text,
+                is_focused: is_focused.get(),
+            });
         });
     }
 
@@ -233,6 +345,7 @@ pub fn text_input(buffer: RwSignal<String>) -> TextInput {
         set_ime_allowed(true);
     })
     .on_event_stop(EventListener::FocusLost, move |_| {
+        id.update_state(TextInputUpdateState::BlurCommitOnFocusLost);
         is_focused.set(false);
         if ime_debug_enabled() {
             eprintln!(
@@ -413,6 +526,21 @@ impl TextInput {
             .update(|buf| buf.insert_str(self.cursor_glyph_idx, text));
         self.cursor_glyph_idx += text.len();
         self.ime_debug_log("commit_ime_text:insert");
+    }
+
+    fn sync_ime_text_context(&self) {
+        if !self.is_focused {
+            return;
+        }
+
+        let buffer = self.buffer.get_untracked();
+        let snapshot = ime_text_context_snapshot(
+            &buffer,
+            self.cursor_glyph_idx,
+            self.selection.clone(),
+            self.ime_preedit.as_ref(),
+        );
+        set_ime_text_context(snapshot.text, snapshot.selection, snapshot.marked_range);
     }
 
     fn move_cursor(&mut self, move_kind: Movement, direction: Direction) -> bool {
@@ -1200,17 +1328,35 @@ impl View for TextInput {
     }
 
     fn update(&mut self, cx: &mut UpdateCx, state: Box<dyn Any>) {
-        if let Ok(state) = state.downcast::<(String, bool)>() {
-            let (value, is_focused) = *state;
-
-            // Only update recomputation if the state has actually changed
-            if self.is_focused != is_focused || value != self.buffer.last_buffer {
-                if is_focused && !cx.app_state.is_active(&self.id) {
-                    self.selection = None;
-                    self.cursor_glyph_idx = self.buffer.with_untracked(|buf| buf.len());
+        if let Ok(state) = state.downcast::<TextInputUpdateState>() {
+            match *state {
+                TextInputUpdateState::ExternalState { value, is_focused } => {
+                    // Only update recomputation if the state has actually changed
+                    if self.is_focused != is_focused || value != self.buffer.last_buffer {
+                        let was_focused = self.is_focused;
+                        if is_focused && !cx.app_state.is_active(&self.id) {
+                            self.selection = None;
+                            self.cursor_glyph_idx = self.buffer.with_untracked(|buf| buf.len());
+                        }
+                        self.is_focused = is_focused;
+                        if self.is_focused {
+                            if !was_focused {
+                                set_ime_allowed(true);
+                            }
+                            self.sync_ime_text_context();
+                        }
+                        self.id.request_layout();
+                    }
                 }
-                self.is_focused = is_focused;
-                self.id.request_layout();
+                TextInputUpdateState::BlurCommitOnFocusLost => {
+                    if let Some(text) = blur_commit_text(false, self.ime_preedit.as_ref()) {
+                        self.commit_ime_text(&text);
+                        self.ime_commit_pending = false;
+                        self.sync_ime_text_context();
+                        self.ime_debug_log("focus_lost:event_blur_commit");
+                        self.id.request_layout();
+                    }
+                }
             }
         } else {
             eprintln!("downcast failed");
@@ -1282,23 +1428,40 @@ impl View for TextInput {
                         self.ime_commit_pending,
                     );
                 }
-                if text.is_empty() {
-                    let should_handle =
-                        should_clear_ime_preedit(self.ime_preedit.is_some(), self.ime_commit_pending);
-                    if should_handle {
-                        self.ime_commit_pending = self.ime_preedit.is_some();
+                match next_ime_preedit_transition(
+                    self.ime_preedit.is_some(),
+                    self.ime_commit_pending,
+                    self.is_focused,
+                    text,
+                    *cursor,
+                ) {
+                    ImePreeditTransition::Clear { pending_commit } => {
+                        let blur_commit = blur_commit_text(self.is_focused, self.ime_preedit.as_ref());
+                        self.ime_commit_pending = pending_commit;
                         self.clear_preedit();
-                        self.ime_debug_log("ime_preedit:clear");
+                        if let Some(text) = blur_commit {
+                            self.commit_ime_text(&text);
+                            self.ime_commit_pending = false;
+                            self.sync_ime_text_context();
+                            self.ime_debug_log("ime_preedit:blur_commit");
+                            true
+                        } else {
+                            self.sync_ime_text_context();
+                            self.ime_debug_log("ime_preedit:clear");
+                            true
+                        }
                     }
-                    should_handle
-                } else if should_accept_ime_preedit(self.is_focused) {
-                    self.set_preedit(text.clone(), *cursor);
-                    self.ime_commit_pending = false;
-                    self.ime_debug_log("ime_preedit:accept");
-                    true
-                } else {
-                    self.ime_debug_log("ime_preedit:ignored");
-                    false
+                    ImePreeditTransition::Set { preedit } => {
+                        self.set_preedit(preedit.text, preedit.cursor);
+                        self.ime_commit_pending = false;
+                        self.sync_ime_text_context();
+                        self.ime_debug_log("ime_preedit:accept");
+                        true
+                    }
+                    ImePreeditTransition::Ignored => {
+                        self.ime_debug_log("ime_preedit:ignored");
+                        false
+                    }
                 }
             }
             Event::ImeCommit(text) => {
@@ -1313,14 +1476,19 @@ impl View for TextInput {
                         self.ime_commit_pending,
                     );
                 }
-                if should_accept_ime_commit(self.ime_preedit.is_some(), self.ime_commit_pending) {
-                    self.commit_ime_text(text);
-                    self.ime_commit_pending = false;
-                    self.ime_debug_log("ime_commit:accept");
-                    true
-                } else {
-                    self.ime_debug_log("ime_commit:ignored");
-                    false
+                match next_ime_commit_transition(self.ime_preedit.is_some(), self.ime_commit_pending)
+                {
+                    ImeCommitTransition::Accept => {
+                        self.commit_ime_text(text);
+                        self.ime_commit_pending = false;
+                        self.sync_ime_text_context();
+                        self.ime_debug_log("ime_commit:accept");
+                        true
+                    }
+                    ImeCommitTransition::Ignored => {
+                        self.ime_debug_log("ime_commit:ignored");
+                        false
+                    }
                 }
             }
             Event::ImeDisabled => {
@@ -1477,31 +1645,7 @@ impl View for TextInput {
         if self.is_focused {
             let cursor_rect = self.get_cursor_rect(&node_layout);
             set_ime_cursor_area(cursor_rect.origin(), cursor_rect.size());
-            let buffer = self.buffer.get_untracked();
-            if let Some(preedit) = self.ime_preedit.as_ref() {
-                let insert_idx = clamp_text_boundary(&buffer, self.cursor_glyph_idx);
-                let rendered = display_text_with_preedit(&buffer, self.cursor_glyph_idx, Some(preedit));
-                let marked_start = insert_idx;
-                let marked_end = insert_idx + preedit.text.len();
-                let cursor = marked_start + preedit.display_cursor_offset();
-                let start = byte_to_utf16_index(&rendered, cursor);
-                let end = byte_to_utf16_index(&rendered, cursor);
-                let marked_start_utf16 = byte_to_utf16_index(&rendered, marked_start);
-                let marked_end_utf16 = byte_to_utf16_index(&rendered, marked_end);
-                set_ime_text_context(
-                    rendered,
-                    (start, end),
-                    Some((marked_start_utf16, marked_end_utf16)),
-                );
-            } else {
-                let selection = self
-                    .selection
-                    .clone()
-                    .unwrap_or(self.cursor_glyph_idx..self.cursor_glyph_idx);
-                let start = byte_to_utf16_index(&buffer, selection.start);
-                let end = byte_to_utf16_index(&buffer, selection.end);
-                set_ime_text_context(buffer, (start, end), None);
-            }
+            self.sync_ime_text_context();
         }
 
         None
@@ -1595,12 +1739,14 @@ fn display_text_with_preedit(
 #[cfg(test)]
 mod tests {
     use crate::views::text_input::get_dbl_click_selection;
-    use std::ffi::OsString;
+    use std::{ffi::OsString, ops::Range};
 
     use super::{
-        display_text_with_preedit, ime_debug_enabled_from, replace_range,
+        blur_commit_text, display_text_with_preedit, ime_debug_enabled_from,
+        ime_text_context_snapshot, next_ime_commit_transition,
+        next_ime_preedit_transition, replace_range,
         should_accept_ime_commit, should_accept_ime_preedit, should_clear_ime_preedit,
-        TextInputPreedit,
+        ImeCommitTransition, ImePreeditTransition, TextInputPreedit,
     };
 
     #[test]
@@ -1675,6 +1821,52 @@ mod tests {
     }
 
     #[test]
+    fn clearing_preedit_marks_trailing_commit_pending() {
+        let transition = next_ime_preedit_transition(true, false, false, "", None);
+
+        assert_eq!(
+            transition,
+            ImePreeditTransition::Clear {
+                pending_commit: true
+            }
+        );
+    }
+
+    #[test]
+    fn clearing_existing_pending_commit_resets_pending_flag() {
+        let transition = next_ime_preedit_transition(false, true, false, "", None);
+
+        assert_eq!(
+            transition,
+            ImePreeditTransition::Clear {
+                pending_commit: false
+            }
+        );
+    }
+
+    #[test]
+    fn focused_preedit_transition_preserves_cursor_data() {
+        let transition = next_ime_preedit_transition(true, true, true, "안", Some((1, 1)));
+
+        assert_eq!(
+            transition,
+            ImePreeditTransition::Set {
+                preedit: TextInputPreedit {
+                    text: "안".to_string(),
+                    cursor: Some((1, 1)),
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn unfocused_field_ignores_foreign_preedit_transition() {
+        let transition = next_ime_preedit_transition(false, false, false, "안", Some((1, 1)));
+
+        assert_eq!(transition, ImePreeditTransition::Ignored);
+    }
+
+    #[test]
     fn trailing_commit_requires_local_preedit_or_pending_commit() {
         assert!(should_accept_ime_commit(true, false));
         assert!(should_accept_ime_commit(false, true));
@@ -1684,6 +1876,85 @@ mod tests {
     #[test]
     fn focused_field_cannot_steal_commit_without_local_state() {
         assert!(!should_accept_ime_commit(false, false));
+    }
+
+    #[test]
+    fn trailing_commit_is_accepted_after_local_preedit_clear() {
+        let clear_transition = next_ime_preedit_transition(true, false, false, "", None);
+        assert_eq!(
+            clear_transition,
+            ImePreeditTransition::Clear {
+                pending_commit: true
+            }
+        );
+
+        let commit_transition = next_ime_commit_transition(false, true);
+        assert_eq!(commit_transition, ImeCommitTransition::Accept);
+    }
+
+    #[test]
+    fn blur_commit_returns_existing_local_preedit_text() {
+        assert_eq!(
+            blur_commit_text(
+                false,
+                Some(&TextInputPreedit {
+                    text: "앞".to_string(),
+                    cursor: Some((3, 3)),
+                }),
+            ),
+            Some("앞".to_string())
+        );
+    }
+
+    #[test]
+    fn blur_commit_ignores_focused_or_empty_preedit() {
+        assert_eq!(
+            blur_commit_text(
+                true,
+                Some(&TextInputPreedit {
+                    text: "앞".to_string(),
+                    cursor: Some((3, 3)),
+                }),
+            ),
+            None
+        );
+        assert_eq!(
+            blur_commit_text(
+                false,
+                Some(&TextInputPreedit {
+                    text: String::new(),
+                    cursor: None,
+                }),
+            ),
+            None
+        );
+        assert_eq!(blur_commit_text(false, None), None);
+    }
+
+    #[test]
+    fn ime_text_context_snapshot_marks_current_preedit_range() {
+        let snapshot = ime_text_context_snapshot(
+            "",
+            0,
+            None,
+            Some(&TextInputPreedit {
+                text: "안".to_string(),
+                cursor: Some((3, 3)),
+            }),
+        );
+
+        assert_eq!(snapshot.text, "안");
+        assert_eq!(snapshot.selection, (1, 1));
+        assert_eq!(snapshot.marked_range, Some((0, 1)));
+    }
+
+    #[test]
+    fn ime_text_context_snapshot_uses_selection_without_preedit() {
+        let snapshot = ime_text_context_snapshot("hello", 4, Some(Range { start: 1, end: 3 }), None);
+
+        assert_eq!(snapshot.text, "hello");
+        assert_eq!(snapshot.selection, (1, 3));
+        assert_eq!(snapshot.marked_range, None);
     }
 
     #[test]

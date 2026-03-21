@@ -3,9 +3,9 @@
 
 use crate::{
     style_class,
-    view::IntoView,
+    view::{IntoView, View},
     views::{
-        self, create_value_container_signals, h_stack, svg, value_container, Decorators,
+        self, container, create_value_container_signals, h_stack, svg, value_container, Decorators,
         ValueContainer,
     },
 };
@@ -22,13 +22,24 @@ style_class!(
     pub LabeledCheckboxClass
 );
 
-fn checkbox_svg(checked: impl SignalGet<bool> + 'static) -> impl IntoView {
-    const CHECKBOX_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 16 16"><polygon points="5.19,11.83 0.18,7.44 1.82,5.56 4.81,8.17 10,1.25 12,2.75" /></svg>"#;
-    let svg_str = move || if checked.get() { CHECKBOX_SVG } else { "" }.to_string();
-    svg(CHECKBOX_SVG)
-        .update_value(svg_str)
+style_class!(
+    /// The style class that is applied to the checkmark inside a checkbox.
+    pub CheckboxMarkClass
+);
+
+const CHECKBOX_MARK_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.2 4.8L6.5 11.5L2.8 7.8" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+
+fn checkbox_mark(checked: impl SignalGet<bool> + 'static) -> impl View {
+    svg(CHECKBOX_MARK_SVG)
+        .class(CheckboxMarkClass)
+        .style(move |s| s.apply_if(!checked.get(), |s| s.display(taffy::style::Display::None)))
+}
+
+fn checkbox_control(checked: impl SignalGet<bool> + 'static) -> impl View {
+    container(checkbox_mark(checked))
         .class(CheckboxClass)
         .keyboard_navigable()
+        .style(|s| s.items_center().justify_center())
 }
 
 /// # A customizable checkbox view for boolean selection.
@@ -52,7 +63,7 @@ impl Checkbox {
         let (inbound_signal, outbound_signal) = create_value_container_signals(checked);
 
         value_container(
-            checkbox_svg(inbound_signal.read_only()).on_click_stop(move |_| {
+            checkbox_control(inbound_signal.read_only()).on_click_stop(move |_| {
                 let checked = inbound_signal.get_untracked();
                 outbound_signal.set(!checked);
             }),
@@ -67,7 +78,7 @@ impl Checkbox {
     pub fn new_rw(
         checked: impl SignalGet<bool> + SignalUpdate<bool> + Copy + 'static,
     ) -> impl IntoView {
-        checkbox_svg(checked).on_click_stop(move |_| {
+        checkbox_control(checked).on_click_stop(move |_| {
             checked.update(|val| *val = !*val);
         })
     }
@@ -84,7 +95,7 @@ impl Checkbox {
 
         value_container(
             h_stack((
-                checkbox_svg(inbound_signal.read_only()),
+                checkbox_control(inbound_signal.read_only()),
                 views::label(label),
             ))
             .class(LabeledCheckboxClass)
@@ -105,7 +116,7 @@ impl Checkbox {
         checked: impl SignalGet<bool> + SignalUpdate<bool> + Copy + 'static,
         label: impl Fn() -> S + 'static,
     ) -> impl IntoView {
-        h_stack((checkbox_svg(checked), views::label(label)))
+        h_stack((checkbox_control(checked), views::label(label)))
             .class(LabeledCheckboxClass)
             .style(|s| s.items_center().justify_center())
             .on_click_stop(move |_| {
@@ -125,4 +136,20 @@ pub fn labeled_checkbox<S: Display + 'static>(
     label: impl Fn() -> S + 'static,
 ) -> ValueContainer<bool> {
     Checkbox::labeled(checked, label)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CHECKBOX_MARK_SVG;
+    use floem_renderer::usvg;
+
+    #[test]
+    fn checkbox_mark_svg_parses() {
+        assert!(usvg::Tree::from_str(CHECKBOX_MARK_SVG, &usvg::Options::default()).is_ok());
+    }
+
+    #[test]
+    fn checkbox_mark_svg_uses_current_color() {
+        assert!(CHECKBOX_MARK_SVG.contains("currentColor"));
+    }
 }

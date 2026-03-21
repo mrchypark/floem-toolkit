@@ -2,11 +2,33 @@ local M = {}
 
 local key_codes = {
     a = 0,
+    b = 11,
+    c = 8,
     s = 1,
     d = 2,
+    e = 14,
+    f = 3,
+    g = 5,
+    h = 4,
+    i = 34,
+    j = 38,
     v = 9,
     k = 40,
+    l = 37,
+    m = 46,
+    n = 45,
+    o = 31,
+    p = 35,
+    q = 12,
+    r = 15,
+    t = 17,
+    u = 32,
+    w = 13,
+    x = 7,
+    y = 16,
+    z = 6,
     delete = 51,
+    forwarddelete = 117,
     tab = 48,
     space = 49,
     pagedown = 121,
@@ -105,6 +127,23 @@ local function read_file(path)
     return content
 end
 
+local function state_log_has_pattern_after(offset, pattern)
+    local content = read_file(M.state_log_file)
+    if content == nil then
+        return false
+    end
+
+    local haystack = content
+    local start_offset = offset or 0
+    if start_offset > 0 and start_offset < #content then
+        haystack = content:sub(start_offset + 1)
+    elseif start_offset >= #content then
+        haystack = ""
+    end
+
+    return haystack:find(pattern, 1, true) ~= nil
+end
+
 function M.wait_for_state_log_pattern(pattern, timeout_seconds)
     return M.wait_for_state_log_pattern_after(0, pattern, timeout_seconds)
 end
@@ -117,25 +156,24 @@ function M.state_log_mark()
     return #content
 end
 
-function M.wait_for_state_log_pattern_after(offset, pattern, timeout_seconds)
+function M.state_log_contains_pattern_after(offset, pattern, timeout_seconds)
     local timeout = timeout_seconds or 2.0
     local deadline = hs.timer.secondsSinceEpoch() + timeout
     local start_offset = offset or 0
     while hs.timer.secondsSinceEpoch() <= deadline do
-        local content = read_file(M.state_log_file)
-        if content ~= nil then
-            local haystack = content
-            if start_offset > 0 and start_offset < #content then
-                haystack = content:sub(start_offset + 1)
-            elseif start_offset >= #content then
-                haystack = ""
-            end
-            if haystack:find(pattern, 1, true) ~= nil then
-                M.log(string.format("state_log matched pattern=%s after=%d", pattern, start_offset))
-                return true
-            end
+        if state_log_has_pattern_after(start_offset, pattern) then
+            M.log(string.format("state_log matched pattern=%s after=%d", pattern, start_offset))
+            return true
         end
         M.sleep(0.05)
+    end
+    return false
+end
+
+function M.wait_for_state_log_pattern_after(offset, pattern, timeout_seconds)
+    local start_offset = offset or 0
+    if M.state_log_contains_pattern_after(start_offset, pattern, timeout_seconds) then
+        return true
     end
     error(string.format("timed out waiting for state log pattern after %d: %s", start_offset, pattern))
 end
@@ -259,10 +297,11 @@ function M.activate_window()
     M.sleep(0.12)
 end
 
-function M.key_strokes(text)
+function M.key_strokes(text, inter_key_delay)
+    local delay = inter_key_delay or 0.03
     for c in text:gmatch(".") do
         M.key(c)
-        M.sleep(0.03)
+        M.sleep(delay)
     end
 end
 
@@ -281,8 +320,8 @@ end
 
 function M.clear_field(rel_x, rel_y)
     M.click_rel(rel_x, rel_y)
-    M.key("a", { "cmd" })
-    M.key("delete")
+    M.key("delete", { "cmd" })
+    M.key("forwarddelete", { "cmd" })
     M.sleep(0.05)
 end
 

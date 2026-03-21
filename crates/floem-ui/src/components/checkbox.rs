@@ -65,31 +65,31 @@ impl Checkbox {
             .style(move |s| {
                 let recipe = recipe.get();
                 let theme = theme.get();
-                let background = if checked.get() {
+                let is_checked = checked.get();
+                let background = if is_checked {
                     recipe.checked
                 } else {
                     recipe.background
                 };
-                s.background(to_color(background))
-                    .color(to_color(recipe.foreground))
-                    .border(1.0)
-                    .border_color(to_color(recipe.border))
-                    .border_radius(recipe.radius)
-                    .size(18.0, 18.0)
-                    .hover(|s| {
-                        s.background(to_color(
-                            theme.checkbox_hover_background(checked.get(), &recipe),
-                        ))
-                    })
-                    .active(|s| {
-                        s.background(to_color(
-                            theme.checkbox_active_background(checked.get(), &recipe),
-                        ))
-                    })
-                    .focus_visible(|s| {
-                        s.outline(2.0)
-                            .outline_color(to_color(theme.checkbox_focus_ring(&recipe)))
-                    })
+                let hover_background = theme.checkbox_hover_background(is_checked, &recipe);
+                let active_background = theme.checkbox_active_background(is_checked, &recipe);
+                let focus_ring = theme.checkbox_focus_ring(&recipe);
+                s.class(views::CheckboxClass, move |s| {
+                    s.background(to_color(background))
+                        .border(1.0)
+                        .border_color(to_color(recipe.border))
+                        .border_radius(recipe.radius)
+                        .size(18.0, 18.0)
+                        .items_center()
+                        .justify_center()
+                        .hover(|s| s.background(to_color(hover_background)))
+                        .active(|s| s.background(to_color(active_background)))
+                        .focus_visible(|s| s.outline(2.0).outline_color(to_color(focus_ring)))
+                })
+                .class(views::CheckboxMarkClass, move |s| {
+                    s.size(12.0, 12.0)
+                        .color(to_color(recipe.checked_foreground))
+                })
             });
 
         ThemeBind::new(checkbox, move |next_theme: ResolvedTheme| {

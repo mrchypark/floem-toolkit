@@ -284,15 +284,15 @@ impl Input {
                 } else {
                     Color::rgba8(0, 0, 0, 0)
                 };
-                s.min_width(220.0)
+                s.width_full()
                     .height(recipe.height)
-                    .padding_left(12.0)
-                    .padding_right(12.0)
+                    .padding_left(14.0)
+                    .padding_right(14.0)
                     .background(to_color(recipe.background))
                     .border(1.0)
                     .border_color(to_color(effective_border))
                     .border_radius(recipe.radius)
-                    .outline(if is_focused { 1.0 } else { 0.0 })
+                    .outline(if is_focused { 2.0 } else { 0.0 })
                     .outline_color(outline_color)
                     .hover(|s| {
                         if is_focused {

@@ -5,10 +5,10 @@ use crate::{
         dropdown::{self},
         scroll,
         slider::{self, SliderClass},
-        ButtonClass, CheckboxClass, LabelClass, LabelCustomStyle, LabeledCheckboxClass,
-        LabeledRadioButtonClass, ListClass, ListItemClass, PlaceholderTextClass, RadioButtonClass,
-        RadioButtonDotClass, TextInputClass, ToggleButtonCircleRad, ToggleButtonClass,
-        ToggleButtonInset, TooltipClass,
+        ButtonClass, CheckboxClass, CheckboxMarkClass, LabelClass, LabelCustomStyle,
+        LabeledCheckboxClass, LabeledRadioButtonClass, ListClass, ListItemClass,
+        PlaceholderTextClass, RadioButtonClass, RadioButtonDotClass, TextInputClass,
+        ToggleButtonCircleRad, ToggleButtonClass, ToggleButtonInset, TooltipClass,
     },
 };
 use peniko::{Brush, Color};
@@ -84,6 +84,8 @@ pub(crate) fn default_theme() -> Theme {
     let checkbox_style = Style::new()
         .width(20.)
         .height(20.)
+        .align_items(AlignItems::Center)
+        .justify_center()
         .background(Color::WHITE)
         .active(|s| s.background(active_bg_color))
         .transition(Background, Transition::linear(100.millis()))
@@ -95,6 +97,12 @@ pub(crate) fn default_theme() -> Theme {
             s.background(Color::rgb8(180, 188, 175).multiply_alpha(0.3))
                 .color(Color::GRAY)
         });
+
+    let checkbox_mark_style = Style::new()
+        .width(12.)
+        .height(12.)
+        .color(Color::rgb8(40, 40, 40))
+        .disabled(|s| s.color(Color::GRAY));
 
     let labeled_checkbox_style = Style::new()
         .row_gap(padding)
@@ -194,9 +202,7 @@ pub(crate) fn default_theme() -> Theme {
         .border(0.0)
         .cursor(CursorStyle::Text)
         .padding(0.0)
-        .disabled(|s| {
-            s.color(Color::GRAY)
-        });
+        .disabled(|s| s.color(Color::GRAY));
 
     let item_focused_style = Style::new().selected(|s| {
         s.background(selected_bg_color)
@@ -218,6 +224,7 @@ pub(crate) fn default_theme() -> Theme {
         })
         .class(LabeledCheckboxClass, |_| labeled_checkbox_style)
         .class(CheckboxClass, |_| checkbox_style)
+        .class(CheckboxMarkClass, |_| checkbox_mark_style)
         .class(RadioButtonClass, |_| radio_button_style)
         .class(RadioButtonDotClass, |_| radio_button_dot_style)
         .class(LabeledRadioButtonClass, |_| labeled_radio_button_style)

@@ -254,10 +254,11 @@ wait_for_window_snapshot() {
 
 launch_showcase() {
   local mode="$1"
+  local result_var="$2"
 
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     log "[dry-run] launch showcase mode=${mode}"
-    printf '0|0|0|0|%s|%s\n' "${DEFAULT_WINDOW_W}" "${DEFAULT_WINDOW_H}"
+    printf -v "${result_var}" '0|0|0|0|%s|%s' "${DEFAULT_WINDOW_W}" "${DEFAULT_WINDOW_H}"
     return 0
   fi
 
@@ -296,7 +297,7 @@ EOF
     echo "failed to detect showcase window for pid=${pid}" >&2
     exit 1
   }
-  printf '%s\n' "${snapshot}"
+  printf -v "${result_var}" '%s' "${snapshot}"
 }
 
 select_reuse_snapshot() {
@@ -382,6 +383,9 @@ hs_invoke() {
     return 0
   fi
   : >"${log_file}"
+  if [[ -n "${state_log_file}" ]]; then
+    : >"${state_log_file}"
+  fi
   cat >"${params_file}" <<EOF
 return {
   repo_root = [[${repo_root}]],
@@ -514,15 +518,22 @@ validate_normal_group() {
     "${state_log}" \
     'stage=ime_preedit:accept focused=true cursor=0 buffer="" preedit=Some("안") commit_pending=false' \
     "normal case_a first Hangul preedit"
-  require_log_pattern_order \
+  require_log_pattern \
     "${state_log}" \
     'ime-source focused=false value="앞"' \
+    "normal composition handoff commits on source"
+  require_log_pattern \
+    "${state_log}" \
     'ime-target focused=true value=""' \
     "normal composition handoff keeps target empty"
   require_log_pattern \
     "${state_log}" \
-    'ime-source ime_preedit text="안"' \
+    'stage=ime_preedit:accept focused=true cursor=3 buffer="앞" preedit=Some("안") commit_pending=false' \
     "normal case_d re-entry starts a new Hangul preedit"
+  require_log_pattern \
+    "${state_log}" \
+    'ime-first focused=false value="안녕하세요"' \
+    "normal case_e initial phrase keeps the first syllable"
   require_log_pattern \
     "${state_log}" \
     'ime-source focused=false value="앞안"' \
@@ -531,6 +542,68 @@ validate_normal_group() {
     "${state_log}" \
     'ime-target focused=true value=""' \
     "normal re-entry handoff keeps target empty after recommit"
+}
+
+validate_normal_case() {
+  local case_name="$1"
+  local state_log="$2"
+
+  case "${case_name}" in
+    case_a)
+      require_log_pattern \
+        "${state_log}" \
+        'stage=ime_preedit:accept focused=true cursor=0 buffer="" preedit=Some("안") commit_pending=false' \
+        "normal case_a first Hangul preedit"
+      ;;
+    case_b)
+      require_log_pattern \
+        "${state_log}" \
+        'ime-source focused=false value="앞"' \
+        "normal case_b click handoff commits on source"
+      require_log_pattern \
+        "${state_log}" \
+        'ime-target focused=true value=""' \
+        "normal case_b click handoff keeps target empty"
+      ;;
+    case_c)
+      require_log_pattern \
+        "${state_log}" \
+        'ime-source focused=false value="앞"' \
+        "normal case_c tab handoff commits on source"
+      require_log_pattern \
+        "${state_log}" \
+        'ime-target focused=true value=""' \
+        "normal case_c tab handoff keeps target empty"
+      ;;
+    case_d)
+      require_log_pattern \
+        "${state_log}" \
+        'stage=ime_preedit:accept focused=true cursor=3 buffer="앞" preedit=Some("안") commit_pending=false' \
+        "normal case_d re-entry starts a new Hangul preedit"
+      require_log_pattern \
+        "${state_log}" \
+        'ime-source focused=false value="앞안"' \
+        "normal case_d re-entry recommit stays on source"
+      require_log_pattern \
+        "${state_log}" \
+        'ime-target focused=true value=""' \
+        "normal case_d re-entry handoff keeps target empty after recommit"
+      ;;
+    case_e)
+      require_log_pattern \
+        "${state_log}" \
+        'ime-first focused=false value="안녕하세요"' \
+        "normal case_e initial phrase keeps the first syllable"
+      require_log_pattern \
+        "${state_log}" \
+        'ime-source focused=true value=""' \
+        "normal case_e tab handoff focuses the next field"
+      ;;
+    *)
+      echo "unknown normal case for validation: ${case_name}" >&2
+      exit 2
+      ;;
+  esac
 }
 
 run_plain_group() {
@@ -573,8 +646,10 @@ run_plain_group() {
   fi
 }
 
-run_normal_group() {
+run_normal_case() {
   local snapshot="$1"
+  local case_name="$2"
+
   parse_snapshot_into "${snapshot}" NORMAL
   local surface_mode="embedded"
 
@@ -596,10 +671,10 @@ run_normal_group() {
   fi
 
   hs_invoke \
-    "${LOG_ROOT}/showcase_ime_lab.log" \
+    "${LOG_ROOT}/showcase_ime_lab_${case_name}.log" \
     "${REPO_ROOT}/scripts/ime/run_showcase_ime_lab.lua" \
     "${REPO_ROOT}" \
-    "all" \
+    "${case_name}" \
     "${surface_mode}" \
     "${NORMAL_WINDOW_ID}" \
     "${NORMAL_X}" \
@@ -608,9 +683,32 @@ run_normal_group() {
     "${NORMAL_H}" \
     "${LOG_ROOT}/launch_normal.state.log"
 
-  if [[ "${DRY_RUN}" -eq 0 ]]; then
-    validate_normal_group
+  if [[ "${DRY_RUN}" -eq 0 && "${case_name}" != "all" ]]; then
+    cp "${LOG_ROOT}/launch_normal.state.log" "${LOG_ROOT}/launch_normal_${case_name}.state.log"
+    validate_normal_case "${case_name}" "${LOG_ROOT}/launch_normal.state.log"
   fi
+}
+
+run_normal_group() {
+  local snapshot="${1:-}"
+
+  if [[ "${REUSE_RUNNING}" -eq 1 ]]; then
+    run_normal_case "${snapshot}" "all"
+    if [[ "${DRY_RUN}" -eq 0 ]]; then
+      validate_normal_group
+    fi
+    return
+  fi
+
+  local case_name
+  local case_snapshot
+  local normal_cases=(case_e case_d case_a case_b case_c)
+  for case_name in "${normal_cases[@]}"; do
+    launch_showcase normal case_snapshot
+    run_normal_case "${case_snapshot}" "${case_name}"
+    cleanup
+    managed_pid=""
+  done
 }
 
 case "${GROUP}" in
@@ -618,17 +716,17 @@ case "${GROUP}" in
     if [[ "${REUSE_RUNNING}" -eq 1 ]]; then
       plain_snapshot="$(select_reuse_snapshot plain)"
     else
-      plain_snapshot="$(launch_showcase plain)"
+      launch_showcase plain plain_snapshot
     fi
     run_plain_group "${plain_snapshot}"
     ;;
   normal)
     if [[ "${REUSE_RUNNING}" -eq 1 ]]; then
       normal_snapshot="$(select_reuse_snapshot normal)"
+      run_normal_group "${normal_snapshot}"
     else
-      normal_snapshot="$(launch_showcase normal)"
+      run_normal_group
     fi
-    run_normal_group "${normal_snapshot}"
     ;;
   all)
     if [[ "${REUSE_RUNNING}" -eq 1 ]]; then
@@ -637,12 +735,11 @@ case "${GROUP}" in
       normal_snapshot="$(select_reuse_snapshot normal)"
       run_normal_group "${normal_snapshot}"
     else
-      plain_snapshot="$(launch_showcase plain)"
+      launch_showcase plain plain_snapshot
       run_plain_group "${plain_snapshot}"
       cleanup
       managed_pid=""
-      normal_snapshot="$(launch_showcase normal)"
-      run_normal_group "${normal_snapshot}"
+      run_normal_group
     fi
     ;;
 esac

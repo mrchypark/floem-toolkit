@@ -24,6 +24,8 @@ if mode == "plain" then
     env.FLOEM_SHOWCASE_DEBUG_PLAIN_INPUT_LAB_ONLY = "1"
 elseif mode == "normal" then
     env.FLOEM_SHOWCASE_DEBUG_IME_LAB_ONLY = "1"
+elseif mode == "components" then
+    env.FLOEM_SHOWCASE_DEBUG_COMPONENTS_ONLY = "1"
 end
 env.FLOEM_IME_DEBUG = "1"
 

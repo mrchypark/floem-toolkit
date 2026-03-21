@@ -6,7 +6,7 @@ use floem::reactive::RwSignal;
 use floem::style::FlexWrap;
 use floem::views;
 use floem::window::WindowConfig;
-use floem::Application;
+use floem::{AnyView, Application};
 use floem_charts::model::{ChartBounds, LineConfig, LineDatum};
 use floem_theme::{
     current_theme_signal, resolved_from_definition, ButtonVariant, Patch, ThemeDefinition,
@@ -40,11 +40,22 @@ fn debug_autofocus_ime_first() -> bool {
     std::env::var_os("FLOEM_SHOWCASE_DEBUG_IME_AUTOFOCUS").is_some()
 }
 
+fn components_debug_only() -> bool {
+    std::env::var_os("FLOEM_SHOWCASE_DEBUG_COMPONENTS_ONLY").is_some()
+}
+
+fn checkbox_diagnostics_enabled() -> bool {
+    std::env::var_os("FLOEM_SHOWCASE_DEBUG_CHECKBOX_DIAGNOSTICS").is_some()
+}
+
 fn debug_window_config() -> Option<WindowConfig> {
-    if plain_input_lab_only()
-        || ime_lab_only()
-        || std::env::var_os("FLOEM_SHOWCASE_DEBUG_COMPONENTS_ONLY").is_some()
-    {
+    if components_debug_only() {
+        Some(
+            WindowConfig::default()
+                .size((980.0, 820.0))
+                .position(Point::new(120.0, 90.0)),
+        )
+    } else if plain_input_lab_only() || ime_lab_only() {
         Some(
             WindowConfig::default()
                 .size((800.0, 632.0))
@@ -65,7 +76,7 @@ fn app_view() -> impl IntoView {
 
 fn showcase_shell(mode: RwSignal<ThemeMode>) -> impl IntoView {
     let theme = current_theme_signal();
-    let components_only = std::env::var_os("FLOEM_SHOWCASE_DEBUG_COMPONENTS_ONLY").is_some();
+    let components_only = components_debug_only();
     let plain_lab_only = plain_input_lab_only();
     let ime_lab_only = ime_lab_only();
 
@@ -150,7 +161,8 @@ fn ime_lab_content() -> impl IntoView {
             .h_stack()
             .style(|s| s.items_center().column_gap(12.0)),
         (
-            (
+            ime_lab_panel(
+                (
                 views::label(|| "First Hangul on empty input".to_string()).style(|s| s.font_bold()),
                 if debug_autofocus_ime_first() {
                     Input::new()
@@ -215,66 +227,74 @@ fn ime_lab_content() -> impl IntoView {
                         .color(to_color(ColorScale::rgba(148, 163, 184, 255)))
                 }),
             )
-                .v_stack()
-                .style(|s| s.row_gap(6.0)),
-            (
+                    .v_stack()
+                    .style(|s| s.row_gap(6.0)),
+                300.0,
+                340.0,
+            ),
+            ime_lab_panel(
+                (
                 views::label(|| "Composition handoff".to_string()).style(|s| s.font_bold()),
                 (
-                    Input::new()
-                        .bind(ime_source)
-                        .placeholder("Compose here, then click next field")
-                        .diagnostic_label("ime_source")
-                        .on_debug_state_change(move |state| {
-                            debug_log::append_state_log(format!(
-                                "ime-source focused={} value={:?}",
-                                state.focused, state.value
-                            ));
-                            ime_source_debug.set(state)
-                        })
-                        .build()
-                        .on_event_cont(EventListener::ImePreedit, move |event| {
-                            if let Event::ImePreedit { text, cursor } = event {
+                    ime_lab_input_slot(
+                        Input::new()
+                            .bind(ime_source)
+                            .placeholder("Compose here, then click next field")
+                            .diagnostic_label("ime_source")
+                            .on_debug_state_change(move |state| {
                                 debug_log::append_state_log(format!(
-                                    "ime-source ime_preedit text={text:?} cursor={cursor:?}"
+                                    "ime-source focused={} value={:?}",
+                                    state.focused, state.value
                                 ));
-                            }
-                        })
-                        .on_event_cont(EventListener::ImeCommit, move |event| {
-                            if let Event::ImeCommit(text) = event {
+                                ime_source_debug.set(state)
+                            })
+                            .build()
+                            .on_event_cont(EventListener::ImePreedit, move |event| {
+                                if let Event::ImePreedit { text, cursor } = event {
+                                    debug_log::append_state_log(format!(
+                                        "ime-source ime_preedit text={text:?} cursor={cursor:?}"
+                                    ));
+                                }
+                            })
+                            .on_event_cont(EventListener::ImeCommit, move |event| {
+                                if let Event::ImeCommit(text) = event {
+                                    debug_log::append_state_log(format!(
+                                        "ime-source ime_commit text={text:?}"
+                                    ));
+                                }
+                            }),
+                    ),
+                    ime_lab_input_slot(
+                        Input::new()
+                            .bind(ime_target)
+                            .placeholder("Target should stay clean on handoff")
+                            .diagnostic_label("ime_target")
+                            .on_debug_state_change(move |state| {
                                 debug_log::append_state_log(format!(
-                                    "ime-source ime_commit text={text:?}"
+                                    "ime-target focused={} value={:?}",
+                                    state.focused, state.value
                                 ));
-                            }
-                        }),
-                    Input::new()
-                        .bind(ime_target)
-                        .placeholder("Target should stay clean on handoff")
-                        .diagnostic_label("ime_target")
-                        .on_debug_state_change(move |state| {
-                            debug_log::append_state_log(format!(
-                                "ime-target focused={} value={:?}",
-                                state.focused, state.value
-                            ));
-                            ime_target_debug.set(state)
-                        })
-                        .build()
-                        .on_event_cont(EventListener::ImePreedit, move |event| {
-                            if let Event::ImePreedit { text, cursor } = event {
-                                debug_log::append_state_log(format!(
-                                    "ime-target ime_preedit text={text:?} cursor={cursor:?}"
-                                ));
-                            }
-                        })
-                        .on_event_cont(EventListener::ImeCommit, move |event| {
-                            if let Event::ImeCommit(text) = event {
-                                debug_log::append_state_log(format!(
-                                    "ime-target ime_commit text={text:?}"
-                                ));
-                            }
-                        }),
+                                ime_target_debug.set(state)
+                            })
+                            .build()
+                            .on_event_cont(EventListener::ImePreedit, move |event| {
+                                if let Event::ImePreedit { text, cursor } = event {
+                                    debug_log::append_state_log(format!(
+                                        "ime-target ime_preedit text={text:?} cursor={cursor:?}"
+                                    ));
+                                }
+                            })
+                            .on_event_cont(EventListener::ImeCommit, move |event| {
+                                if let Event::ImeCommit(text) = event {
+                                    debug_log::append_state_log(format!(
+                                        "ime-target ime_commit text={text:?}"
+                                    ));
+                                }
+                            }),
+                    ),
                 )
                     .h_stack()
-                    .style(|s| s.column_gap(12.0)),
+                    .style(|s| s.flex_wrap(FlexWrap::Wrap).column_gap(12.0).row_gap(12.0)),
                 views::label(move || {
                     format!(
                         "Source: {:?} | Target: {:?}",
@@ -287,8 +307,11 @@ fn ime_lab_content() -> impl IntoView {
                         .color(to_color(ColorScale::rgba(148, 163, 184, 255)))
                 }),
             )
-                .v_stack()
-                .style(|s| s.row_gap(6.0)),
+                    .v_stack()
+                    .style(|s| s.row_gap(6.0)),
+                420.0,
+                480.0,
+            ),
         )
             .h_stack()
             .style(|s| {
@@ -402,14 +425,20 @@ fn components_section() -> impl IntoView {
     let dialog_open = RwSignal::new(false);
     let popover_open = RwSignal::new(false);
     let selected_item = RwSignal::new(Some(Arc::<str>::from("primary")));
+    let diagnostics = if checkbox_diagnostics_enabled() {
+        checkbox_diagnostics_section().into_any()
+    } else {
+        views::empty().style(|s| s.hide()).into_any()
+    };
 
     Card::new()
         .header(section_heading(
             "UI / Slice 1",
-            "The current public path is Button, Label, Card, Input, Checkbox, Tabs, Dialog, Popover, and Select. The showcase uses controlled bindings where the component API needs real reactive ownership.",
+            "Ready-to-use defaults for buttons, cards, inputs, checkboxes, tabs, dialogs, popovers, and selects. These examples keep real state where interaction is part of the component contract.",
         ))
         .content(
             (
+                diagnostics,
                 subsection(
                     "Buttons",
                     (
@@ -435,15 +464,15 @@ fn components_section() -> impl IntoView {
                         }),
                 ),
                 subsection(
-                    "Card composition",
+                    "Cards",
                     (
                         preview_card(
-                            "Builder API",
-                            "Current consumers build explicit structure and let recipes resolve the look.",
+                            "Release brief",
+                            "Use a neutral surface for compact summaries, shipping notes, and short ownership context.",
                         ),
                         preview_card(
-                            "Controlled evolution",
-                            "Next slices will add Input, Checkbox, and Tabs on the same theme path.",
+                            "Safe defaults",
+                            "Inputs, toggles, and cards stay on one spacing and contrast system, so new forms start from a usable baseline.",
                         ),
                     )
                         .h_stack()
@@ -455,82 +484,8 @@ fn components_section() -> impl IntoView {
                 ),
                 subsection(
                     "Form controls",
-                    (
-                        (
-                            views::label(|| "Project name".to_string())
-                                .style(|s| s.font_size(13.0).font_bold()),
-                            Input::new()
-                                .bind(project_name)
-                                .placeholder("Project name")
-                                .build(),
-                            views::label(move || {
-                                format!("Current value: {:?}", project_name.get())
-                            })
-                            .style(|s| {
-                                s.font_size(12.0)
-                                    .line_height(1.4)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 210)))
-                            }),
-                        )
-                            .v_stack()
-                            .style(|s| s.row_gap(6.0).min_width(220.0))
-                            .debug_name("showcase::project_name_input"),
-                        (
-                            views::label(|| "Review status".to_string())
-                                .style(|s| s.font_size(13.0).font_bold()),
-                            Input::new()
-                                .bind(invalid_state)
-                                .invalid(true)
-                                .build(),
-                            views::label(move || {
-                                format!("Current value: {:?}", invalid_state.get())
-                            })
-                            .style(|s| {
-                                s.font_size(12.0)
-                                    .line_height(1.4)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 210)))
-                            }),
-                        )
-                            .v_stack()
-                            .style(|s| s.row_gap(6.0).min_width(220.0))
-                            .debug_name("showcase::invalid_state_input"),
-                        (
-                            views::label(|| "Release gate".to_string())
-                                .style(|s| s.font_size(13.0).font_bold()),
-                            (
-                                Checkbox::new().bind(accepted).build(),
-                                views::label(move || {
-                                    if accepted.get() {
-                                        "Ready for review".to_string()
-                                    } else {
-                                        "Waiting for changes".to_string()
-                                    }
-                                })
-                                .style(|s| s.line_height(1.3)),
-                            )
-                                .h_stack()
-                                .style(|s| s.items_center().column_gap(10.0)),
-                            views::label(|| {
-                                "Simple controls should still read like finished product UI, not diagnostics."
-                                    .to_string()
-                            })
-                            .style(|s| {
-                                s.font_size(12.0)
-                                    .line_height(1.4)
-                                    .color(to_color(ColorScale::rgba(148, 163, 184, 210)))
-                            }),
-                        )
-                            .v_stack()
-                            .style(|s| s.row_gap(8.0).min_width(180.0)),
-                    )
-                        .h_stack()
-                        .style(|s| {
-                            s.flex_wrap(FlexWrap::Wrap)
-                                .items_start()
-                                .column_gap(18.0)
-                                .row_gap(14.0)
-                        })
-                        .debug_name("showcase::form_controls_row"),
+                    form_controls_showcase(project_name, invalid_state, accepted)
+                        .debug_name("showcase::form_controls_panel"),
                 ),
                 subsection(
                     "Tabs",
@@ -544,7 +499,7 @@ fn components_section() -> impl IntoView {
                         .panel(
                             Arc::<str>::from("overview"),
                             views::label(|| {
-                                "Small slices, repeated reviews, and narrow public APIs are the current delivery rule."
+                                "Keep the main view focused. Neighboring tabs should reveal related context without pushing the primary task away."
                                     .to_string()
                             })
                             .style(|s| s.line_height(1.45).max_width(520.0)),
@@ -552,7 +507,7 @@ fn components_section() -> impl IntoView {
                         .panel(
                             Arc::<str>::from("theme"),
                             views::label(|| {
-                                "Themed components now read through the reactive context path instead of the earlier style-pass bridge."
+                                "One token path drives cards, inputs, and toggles, so contrast and spacing move together."
                                     .to_string()
                             })
                             .style(|s| s.line_height(1.45).max_width(520.0)),
@@ -560,7 +515,7 @@ fn components_section() -> impl IntoView {
                         .panel(
                             Arc::<str>::from("charts"),
                             views::label(|| {
-                                "Chart benches currently track scale mapping and nearest-point lookup costs for interactive hover workloads."
+                                "Use tabbed space for distinct tasks, not for hiding required form decisions."
                                     .to_string()
                             })
                             .style(|s| s.line_height(1.45).max_width(520.0)),
@@ -619,6 +574,288 @@ fn components_section() -> impl IntoView {
                 .style(|s| s.row_gap(24.0)),
         )
         .build()
+}
+
+const CHECKBOX_MARK_REFERENCE_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.2 4.8L6.5 11.5L2.8 7.8" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+
+fn checkbox_diagnostics_section() -> impl IntoView {
+    let raw_off = RwSignal::new(false);
+    let raw_on = RwSignal::new(true);
+    let ui_off = RwSignal::new(false);
+    let ui_on = RwSignal::new(true);
+
+    subsection(
+        "Checkbox diagnostics",
+        (
+            views::label(|| {
+                "The same unchecked / checked pair is rendered three ways. If raw vendor and floem-ui wrapper fail the same way while the reference composition is clean, the primitive layer owns the bug."
+                    .to_string()
+            })
+            .style(|s| s.font_size(13.0).line_height(1.5).max_width(760.0)),
+            (
+                checkbox_variant_column(
+                    "Vendor raw",
+                    views::Checkbox::new_rw(raw_off).into_any(),
+                    views::Checkbox::new_rw(raw_on).into_any(),
+                ),
+                checkbox_variant_column(
+                    "floem-ui wrapper",
+                    Checkbox::new().bind(ui_off).build().into_any(),
+                    Checkbox::new().bind(ui_on).build().into_any(),
+                ),
+                checkbox_variant_column(
+                    "Reference composition",
+                    reference_checkbox(false),
+                    reference_checkbox(true),
+                ),
+            )
+                .h_stack()
+                .style(|s| {
+                    s.flex_wrap(FlexWrap::Wrap)
+                        .items_start()
+                        .column_gap(16.0)
+                        .row_gap(16.0)
+                }),
+        )
+            .v_stack()
+            .style(|s| s.row_gap(12.0)),
+    )
+}
+
+fn checkbox_variant_column(
+    title: &'static str,
+    unchecked: AnyView,
+    checked: AnyView,
+) -> impl IntoView {
+    views::container(
+        (
+            views::label(move || title.to_string()).style(|s| s.font_size(13.0).font_bold()),
+            checkbox_variant_state("off", unchecked),
+            checkbox_variant_state("on", checked),
+        )
+            .v_stack()
+            .style(|s| s.row_gap(10.0)),
+    )
+    .style(|s| {
+        s.min_width(180.0)
+            .padding(14.0)
+            .border(1.0)
+            .border_radius(12.0)
+            .border_color(to_color(ColorScale::rgba(100, 116, 139, 96)))
+    })
+}
+
+fn checkbox_variant_state(label: &'static str, control: AnyView) -> impl IntoView {
+    (
+        views::label(move || label.to_string()).style(|s| {
+            s.min_width(26.0)
+                .font_size(12.0)
+                .color(to_color(ColorScale::rgba(148, 163, 184, 210)))
+        }),
+        control,
+    )
+        .h_stack()
+        .style(|s| s.items_center().column_gap(10.0))
+}
+
+fn ime_lab_panel(
+    content: impl IntoView + 'static,
+    min_width: f64,
+    max_width: f64,
+) -> impl IntoView {
+    views::container(content).style(move |s| {
+        s.min_width(min_width)
+            .max_width(max_width)
+            .flex_basis(min_width)
+            .flex_grow(1.0)
+    })
+}
+
+fn ime_lab_input_slot(content: impl IntoView + 'static) -> impl IntoView {
+    views::container(content).style(|s| s.width(220.0).min_width(220.0).max_width(220.0))
+}
+
+fn reference_checkbox(checked: bool) -> AnyView {
+    let theme = current_theme_signal();
+    let icon = if checked {
+        let icon_theme = theme;
+        views::svg(CHECKBOX_MARK_REFERENCE_SVG)
+            .style(move |s| {
+                let recipe = resolved_from_definition(&icon_theme.get()).checkbox_recipe();
+                s.size(12.0, 12.0)
+                    .color(to_color(recipe.checked_foreground))
+            })
+            .into_any()
+    } else {
+        views::empty().style(|s| s.size(12.0, 12.0)).into_any()
+    };
+
+    views::container(icon)
+        .style(move |s| {
+            let recipe = resolved_from_definition(&theme.get()).checkbox_recipe();
+            let background = if checked {
+                recipe.checked
+            } else {
+                recipe.background
+            };
+            s.size(18.0, 18.0)
+                .padding(3.0)
+                .justify_center()
+                .items_center()
+                .background(to_color(background))
+                .border(1.0)
+                .border_color(to_color(recipe.border))
+                .border_radius(recipe.radius)
+        })
+        .into_any()
+}
+
+fn form_field_title(text: &'static str) -> impl IntoView {
+    Label::new(text)
+        .build()
+        .style(|s| s.font_size(12.0).font_bold().line_height(1.3))
+}
+
+fn form_field_help(text: &'static str) -> impl IntoView {
+    views::label(move || text.to_string()).style(|s| {
+        s.font_size(12.0)
+            .line_height(1.45)
+            .max_width(360.0)
+            .color(to_color(ColorScale::rgba(148, 163, 184, 220)))
+    })
+}
+
+fn form_controls_showcase(
+    project_name: RwSignal<String>,
+    invalid_state: RwSignal<String>,
+    accepted: RwSignal<bool>,
+) -> impl IntoView {
+    Card::new()
+        .content(
+            (
+                form_setting_row(
+                    "Project name",
+                    "Used in release notes and the workspace switcher.",
+                    Input::new()
+                        .bind(project_name)
+                        .placeholder("Project name")
+                        .build()
+                        .debug_name("showcase::project_name_input")
+                        .into_any(),
+                    false,
+                ),
+                form_setting_row(
+                    "Review status",
+                    "Required before release. Keep the invalid state readable without overpowering the form.",
+                    Input::new()
+                        .bind(invalid_state)
+                        .invalid(true)
+                        .build()
+                        .debug_name("showcase::invalid_state_input")
+                        .into_any(),
+                    true,
+                ),
+                form_toggle_row(accepted, true),
+            )
+                .v_stack()
+                .style(|s| s.width_full().row_gap(0.0)),
+        )
+        .build()
+        .style(|s| s.width_full().max_width(720.0))
+}
+
+fn form_setting_row(
+    title: &'static str,
+    help: &'static str,
+    control: AnyView,
+    separated: bool,
+) -> impl IntoView {
+    form_row_shell(
+        (form_row_info(title, help), form_control_slot(control))
+            .h_stack()
+            .style(|s| {
+                s.width_full()
+                    .items_center()
+                    .justify_between()
+                    .flex_wrap(FlexWrap::Wrap)
+                    .column_gap(24.0)
+                    .row_gap(14.0)
+            }),
+        separated,
+    )
+}
+
+fn form_toggle_row(accepted: RwSignal<bool>, separated: bool) -> impl IntoView {
+    form_row_shell(
+        (
+            form_row_info(
+                "Release gate",
+                "Use a single checkbox row when one explicit approval state should be easy to scan.",
+            ),
+            (
+                Checkbox::new()
+                    .bind(accepted)
+                    .build()
+                    .debug_name("showcase::release_gate_checkbox"),
+                views::label(move || {
+                    if accepted.get() {
+                        "Ready for review".to_string()
+                    } else {
+                        "Waiting for changes".to_string()
+                    }
+                })
+                .style(|s| s.font_size(14.0).font_bold().line_height(1.3)),
+            )
+                .h_stack()
+                .style(|s| s.items_center().column_gap(12.0)),
+        )
+            .h_stack()
+            .style(|s| {
+                s.width_full()
+                    .items_center()
+                    .justify_between()
+                    .flex_wrap(FlexWrap::Wrap)
+                    .column_gap(24.0)
+                    .row_gap(14.0)
+            }),
+        separated,
+    )
+}
+
+fn form_row_info(title: &'static str, help: &'static str) -> impl IntoView {
+    views::container(
+        (form_field_title(title), form_field_help(help))
+            .v_stack()
+            .style(|s| s.row_gap(6.0)),
+    )
+    .style(|s| s.min_width(220.0).flex_basis(0.0).flex_grow(1.0))
+}
+
+fn form_control_slot(control: AnyView) -> impl IntoView {
+    views::container(control).style(|s| {
+        s.width_full()
+            .min_width(240.0)
+            .max_width(320.0)
+            .flex_basis(280.0)
+            .flex_grow(1.0)
+    })
+}
+
+fn form_row_shell(content: impl IntoView + 'static, separated: bool) -> impl IntoView {
+    let theme = current_theme_signal();
+    views::container(content).style(move |s| {
+        let recipe = resolved_from_definition(&theme.get()).card_recipe();
+        let s = s
+            .width_full()
+            .padding_top(if separated { 18.0 } else { 0.0 })
+            .padding_bottom(18.0);
+
+        if separated {
+            s.border_top(1.0).border_color(to_color(recipe.border))
+        } else {
+            s
+        }
+    })
 }
 
 fn scope_section() -> impl IntoView {

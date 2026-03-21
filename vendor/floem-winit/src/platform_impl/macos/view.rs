@@ -7,8 +7,7 @@ use std::ptr::NonNull;
 use hangul_cd::string::StringComposer;
 use icrate::Foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSCopying, NSMutableAttributedString,
-    NSObject, NSObjectProtocol, NSNotFound, NSPoint, NSRange, NSRect, NSSize, NSString,
-    NSUInteger,
+    NSNotFound, NSObject, NSObjectProtocol, NSPoint, NSRange, NSRect, NSSize, NSString, NSUInteger,
 };
 use objc2::declare::{Ivar, IvarDrop};
 use objc2::rc::{Id, WeakId};
@@ -27,7 +26,7 @@ use crate::platform_impl::platform::window::position_traffic_lights;
 use crate::{
     dpi::{LogicalPosition, LogicalSize},
     event::{
-        DeviceEvent, ElementState, Event, Ime, Modifiers, MouseButton, MouseScrollDelta,
+        DeviceEvent, ElementState, Event, Ime, KeyEvent, Modifiers, MouseButton, MouseScrollDelta,
         TouchPhase, WindowEvent,
     },
     keyboard::{Key, KeyCode, KeyLocation, ModifiersState, NamedKey, PhysicalKey},
@@ -124,6 +123,40 @@ fn get_left_modifier_code(key: &Key) -> KeyCode {
 
 fn macos_ime_debug_enabled() -> bool {
     std::env::var_os("FLOEM_DEBUG_MACOS_IME").is_some()
+}
+
+fn should_suppress_raw_character_input(ime_allowed: bool, input_source: &str) -> bool {
+    ime_allowed && input_source.starts_with("com.apple.inputmethod.Korean")
+}
+
+fn tab_navigation_ime_state(current_state: ImeState, has_marked_text: bool) -> ImeState {
+    if has_marked_text && current_state == ImeState::Preedit {
+        ImeState::Ground
+    } else {
+        current_state
+    }
+}
+
+fn tab_navigation_key_event() -> KeyEvent {
+    KeyEvent {
+        physical_key: PhysicalKey::Code(KeyCode::Tab),
+        logical_key: Key::Named(NamedKey::Tab),
+        text: Some("\t".into()),
+        location: KeyLocation::Standard,
+        state: ElementState::Pressed,
+        repeat: false,
+        platform_specific: super::event::KeyEventExtra {
+            text_with_all_modifiers: Some("\t".into()),
+            key_without_modifiers: Key::Named(NamedKey::Tab),
+        },
+    }
+}
+
+fn control_text_keyboard_input(text: &str) -> Option<KeyEvent> {
+    match text {
+        "\t" | "\u{19}" => Some(tab_navigation_key_event()),
+        _ => None,
+    }
 }
 
 pub struct MenuItemAction(Box<dyn Fn(isize)>);
@@ -403,12 +436,28 @@ declare_class!(
 
             let korean_source = self.suppresses_raw_character_input() && self.state.ime_allowed.get();
             let previous_raw = self.state.ime_raw_marked_text.borrow().clone();
-            let (marked_text, preedit_string, cursor_range) = if korean_source
+            let current_marked_display = self.state.marked_text.borrow().string().to_string();
+            let carryover_commit = korean_carryover_commit_text(
+                previous_raw.as_deref(),
+                self.state.ime_korean_transition_pending.get(),
+                &preedit_string,
+                &current_marked_display,
+            );
+            let preserve_empty_clear = korean_source
                 && preedit_string.is_empty()
-                && self.state.ime_korean_transition_pending.get()
-                && previous_raw.is_some()
-            {
-                self.debug_log_ime("setMarkedText:ignored_transition_clear", "");
+                && should_preserve_korean_marked_text_on_empty_preedit(
+                    previous_raw.as_deref(),
+                    &current_marked_display,
+                );
+            let (marked_text, preedit_string, cursor_range) = if preserve_empty_clear {
+                if self.state.ime_korean_transition_pending.get() {
+                    self.debug_log_ime("setMarkedText:ignored_transition_clear", "");
+                } else {
+                    self.debug_log_ime(
+                        "setMarkedText:preserve_empty_clear",
+                        &current_marked_display,
+                    );
+                }
                 return;
             } else if korean_source
                 && is_korean_jamo_sequence(&preedit_string)
@@ -432,6 +481,10 @@ declare_class!(
                     Some((display_preedit.len(), display_preedit.len())),
                 )
             } else {
+                if let Some(commit_text) = carryover_commit {
+                    self.debug_log_ime("setMarkedText:synthesize_carryover_commit", &commit_text);
+                    self.queue_event(WindowEvent::Ime(Ime::Commit(commit_text)));
+                }
                 *self.state.ime_raw_marked_text.borrow_mut() = None;
                 self.state.ime_korean_transition_pending.set(false);
                 let cursor_range = if preedit_string.is_empty() {
@@ -565,6 +618,17 @@ declare_class!(
                     replacement_range.length
                 ),
             );
+
+            if is_control && self.state.ime_allowed.get() && self.hasMarkedText() {
+                if let Some(key_event) = control_text_keyboard_input(&string) {
+                    self.debug_log_ime(
+                        "insertText:control_keyboard_navigation",
+                        &format!("string={:?}", string),
+                    );
+                    queue_tab_navigation_key_down(self, false, key_event);
+                    return;
+                }
+            }
 
             let standalone_korean_ime_preedit = self.suppresses_raw_character_input()
                 && self.state.ime_allowed.get()
@@ -757,7 +821,7 @@ declare_class!(
             let window = self.window();
             if let Some(first_responder) = window.firstResponder() {
                 if *first_responder == ***self {
-                    window.selectNextKeyView(Some(self))
+                    queue_tab_navigation_key_down(self, false, tab_navigation_key_event());
                 }
             }
         }
@@ -768,7 +832,7 @@ declare_class!(
             let window = self.window();
             if let Some(first_responder) = window.firstResponder() {
                 if *first_responder == ***self {
-                    window.selectPreviousKeyView(Some(self))
+                    queue_tab_navigation_key_down(self, true, tab_navigation_key_event());
                 }
             }
         }
@@ -1064,12 +1128,13 @@ impl WinitView {
     }
 
     fn suppresses_raw_character_input(&self) -> bool {
-        self.state.ime_allowed.get()
-            && self
-                .state
-                .input_source
-                .borrow()
-                .starts_with("com.apple.inputmethod.Korean")
+        let current_input_source = self.current_input_source();
+        let input_source = if current_input_source.is_empty() {
+            self.state.input_source.borrow().clone()
+        } else {
+            current_input_source
+        };
+        should_suppress_raw_character_input(self.state.ime_allowed.get(), &input_source)
     }
 
     fn current_input_source(&self) -> String {
@@ -1095,19 +1160,15 @@ impl WinitView {
         ));
         let marked = marked_range.map(|(a, b)| (a.min(b), a.max(b)));
         self.state.ime_marked_range.set(match marked {
-            Some((start, end)) => {
-                NSRange::new(start as NSUInteger, (end.saturating_sub(start)) as NSUInteger)
-            }
+            Some((start, end)) => NSRange::new(
+                start as NSUInteger,
+                (end.saturating_sub(start)) as NSUInteger,
+            ),
             None => util::EMPTY_RANGE,
         });
         self.debug_log_ime(
             "set_ime_text_context",
-            &format!(
-                "selection=({}, {}) marked={:?}",
-                start,
-                end - start,
-                marked
-            ),
+            &format!("selection=({}, {}) marked={:?}", start, end - start, marked),
         );
     }
 
@@ -1139,6 +1200,10 @@ impl WinitView {
         }
         self.state.ime_allowed.set(ime_allowed);
         if self.state.ime_allowed.get() {
+            // Refresh the cached input source as soon as the field becomes IME-active.
+            // The user may have switched keyboard layouts after launch but before the
+            // first keypress, and the startup cache would otherwise be stale.
+            *self.state.input_source.borrow_mut() = self.current_input_source();
             return;
         }
 
@@ -1389,6 +1454,31 @@ fn compose_korean_preedit(previous_raw: Option<&str>, incoming: &str) -> Option<
     Some((raw, composer.as_string().ok()?))
 }
 
+fn korean_carryover_commit_text(
+    previous_raw: Option<&str>,
+    transition_pending: bool,
+    incoming: &str,
+    current_marked_display: &str,
+) -> Option<String> {
+    if transition_pending
+        && previous_raw.is_some_and(is_korean_jamo_sequence)
+        && !incoming.is_empty()
+        && !is_korean_jamo_sequence(incoming)
+        && !current_marked_display.is_empty()
+    {
+        Some(current_marked_display.to_string())
+    } else {
+        None
+    }
+}
+
+fn should_preserve_korean_marked_text_on_empty_preedit(
+    previous_raw: Option<&str>,
+    current_marked_display: &str,
+) -> bool {
+    previous_raw.is_some_and(is_korean_jamo_sequence) && !current_marked_display.is_empty()
+}
+
 fn utf16_range_to_byte_range(text: &str, range: NSRange) -> Option<(usize, usize, NSRange)> {
     if range.location == NSNotFound as NSUInteger {
         return None;
@@ -1483,9 +1573,38 @@ fn replace_event(event: &NSEvent, option_as_alt: OptionAsAlt) -> Id<NSEvent> {
     }
 }
 
+fn queue_tab_navigation_key_down(view: &WinitView, backwards: bool, event: KeyEvent) {
+    let previous_state = view.state.ime_state.get();
+    let next_state = tab_navigation_ime_state(previous_state, view.hasMarkedText());
+    if next_state != previous_state {
+        view.state.ime_state.set(next_state);
+    }
+    view.debug_log_ime(
+        "tab_navigation:queue_keyboard_input",
+        &format!(
+            "backwards={} previous_state={:?} next_state={:?}",
+            backwards, previous_state, next_state
+        ),
+    );
+    view.queue_event(WindowEvent::KeyboardInput {
+        device_id: DEVICE_ID,
+        event,
+        is_synthetic: false,
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compose_korean_preedit, is_korean_jamo_sequence};
+    use super::{
+        compose_korean_preedit, control_text_keyboard_input, is_korean_jamo_sequence,
+        korean_carryover_commit_text, should_preserve_korean_marked_text_on_empty_preedit,
+        should_suppress_raw_character_input, tab_navigation_ime_state, tab_navigation_key_event,
+        ImeState,
+    };
+    use crate::{
+        event::ElementState,
+        keyboard::{Key, KeyCode, KeyLocation, NamedKey, PhysicalKey},
+    };
 
     #[test]
     fn korean_jamo_sequence_detects_single_and_multi_char_jamo() {
@@ -1507,5 +1626,119 @@ mod tests {
         let (raw, display) = compose_korean_preedit(Some("ㅇㅏ"), "ㄴ").expect("compose");
         assert_eq!(raw, "ㅇㅏㄴ");
         assert_eq!(display, "안");
+    }
+
+    #[test]
+    fn korean_carryover_commit_detects_missing_startup_commit() {
+        let commit =
+            korean_carryover_commit_text(Some("ㅇㅏㄴ"), true, "녀", "안").expect("commit");
+        assert_eq!(commit, "안");
+    }
+
+    #[test]
+    fn korean_carryover_commit_ignores_regular_preedit_updates() {
+        assert_eq!(
+            korean_carryover_commit_text(Some("ㅎㅏ"), false, "세", "하"),
+            None
+        );
+        assert_eq!(
+            korean_carryover_commit_text(Some("ㅇㅏㄴ"), true, "ㄴ", "안"),
+            None
+        );
+    }
+
+    #[test]
+    fn preserve_empty_korean_preedit_when_marked_text_still_exists() {
+        assert!(should_preserve_korean_marked_text_on_empty_preedit(
+            Some("ㅇㅏㅍ"),
+            "앞"
+        ));
+        assert!(should_preserve_korean_marked_text_on_empty_preedit(
+            Some("ㅇㅏㄴ"),
+            "안"
+        ));
+    }
+
+    #[test]
+    fn do_not_preserve_empty_korean_preedit_without_raw_or_display_text() {
+        assert!(!should_preserve_korean_marked_text_on_empty_preedit(
+            None, "앞"
+        ));
+        assert!(!should_preserve_korean_marked_text_on_empty_preedit(
+            Some("ㅇㅏㅍ"),
+            ""
+        ));
+        assert!(!should_preserve_korean_marked_text_on_empty_preedit(
+            Some("front"),
+            "앞"
+        ));
+    }
+
+    #[test]
+    fn korean_input_source_suppresses_raw_character_input() {
+        assert!(should_suppress_raw_character_input(
+            true,
+            "com.apple.inputmethod.Korean.2SetKorean"
+        ));
+    }
+
+    #[test]
+    fn non_korean_or_disabled_input_source_does_not_suppress_raw_character_input() {
+        assert!(!should_suppress_raw_character_input(
+            false,
+            "com.apple.inputmethod.Korean.2SetKorean"
+        ));
+        assert!(!should_suppress_raw_character_input(
+            true,
+            "com.apple.keylayout.ABC"
+        ));
+    }
+
+    #[test]
+    fn tab_navigation_command_leaves_preedit_grounded_for_app_navigation() {
+        assert_eq!(
+            tab_navigation_ime_state(ImeState::Preedit, true),
+            ImeState::Ground
+        );
+        assert_eq!(
+            tab_navigation_ime_state(ImeState::Preedit, false),
+            ImeState::Preedit
+        );
+        assert_eq!(
+            tab_navigation_ime_state(ImeState::Ground, true),
+            ImeState::Ground
+        );
+    }
+
+    #[test]
+    fn tab_navigation_key_event_matches_regular_tab_input() {
+        let event = tab_navigation_key_event();
+        assert_eq!(event.physical_key, PhysicalKey::Code(KeyCode::Tab));
+        assert_eq!(event.logical_key, Key::Named(NamedKey::Tab));
+        assert_eq!(event.text.as_deref(), Some("\t"));
+        assert_eq!(event.location, KeyLocation::Standard);
+        assert_eq!(event.state, ElementState::Pressed);
+        assert!(!event.repeat);
+        assert_eq!(
+            event.platform_specific.text_with_all_modifiers.as_deref(),
+            Some("\t")
+        );
+        assert_eq!(
+            event.platform_specific.key_without_modifiers,
+            Key::Named(NamedKey::Tab)
+        );
+    }
+
+    #[test]
+    fn control_tab_text_maps_to_tab_navigation_key_event() {
+        let event = control_text_keyboard_input("\t").expect("tab key event");
+        assert_eq!(event.logical_key, Key::Named(NamedKey::Tab));
+        assert_eq!(event.physical_key, PhysicalKey::Code(KeyCode::Tab));
+
+        let backtab_event = control_text_keyboard_input("\u{19}").expect("backtab key event");
+        assert_eq!(backtab_event.logical_key, Key::Named(NamedKey::Tab));
+        assert_eq!(backtab_event.physical_key, PhysicalKey::Code(KeyCode::Tab));
+
+        assert!(control_text_keyboard_input("\n").is_none());
     }
 }

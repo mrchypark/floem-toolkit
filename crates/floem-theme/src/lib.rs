@@ -234,6 +234,21 @@ mod tests {
     }
 
     #[test]
+    fn checkbox_recipe_uses_background_for_checked_mark_contrast() {
+        let light = resolved_from_definition(&ThemeDefinition::new(ThemeMode::Light));
+        let dark = resolved_from_definition(&ThemeDefinition::new(ThemeMode::Dark));
+
+        assert_eq!(
+            light.checkbox_recipe().checked_foreground,
+            light.token_set.semantic.colors.background
+        );
+        assert_eq!(
+            dark.checkbox_recipe().checked_foreground,
+            dark.token_set.semantic.colors.background
+        );
+    }
+
+    #[test]
     fn tabs_interaction_helpers_keep_dark_inactive_hover_translucent() {
         let dark = resolved_from_definition(&ThemeDefinition::new(ThemeMode::Dark));
         let base = dark.tabs_recipe();

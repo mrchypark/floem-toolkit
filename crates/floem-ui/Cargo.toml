@@ -1,0 +1,15 @@
+[package]
+name = "floem-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+floem.workspace = true
+floem-editor-core.workspace = true
+floem-theme.workspace = true
+floem-tokens.workspace = true
+
+[lints]
+workspace = true

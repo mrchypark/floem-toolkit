@@ -1,0 +1,37 @@
+[workspace]
+members = [
+    "crates/floem-tokens",
+    "crates/floem-theme",
+    "crates/floem-ui",
+    "crates/floem-charts",
+    "crates/floem-showcase",
+]
+exclude = ["vendor/floem", "vendor/floem-winit"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/mrchypark/floem-toolkit"
+authors = ["cypark"]
+
+[workspace.dependencies]
+floem = "0.2.0"
+floem-editor-core = "0.2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+floem-tokens = { path = "crates/floem-tokens" }
+floem-theme = { path = "crates/floem-theme" }
+floem-ui = { path = "crates/floem-ui" }
+floem-charts = { path = "crates/floem-charts" }
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+
+[patch.crates-io]
+floem = { path = "vendor/floem" }
+floem-winit = { path = "vendor/floem-winit" }
